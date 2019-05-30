@@ -15,6 +15,7 @@ import threading
 
 import botocore
 import jinja2
+from .jsonnet_renderer import JsonnetRenderer
 from .exceptions import UnsupportedTemplateFileTypeError
 from .exceptions import TemplateSceptreHandlerError
 
@@ -85,11 +86,16 @@ class Template(object):
                 )
             elif file_extension == ".py":
                 self._body = self._call_sceptre_handler()
+            elif file_extension == ".jsonnet":
+                self._body = JsonnetRenderer.render(
+                    os.path.dirname(self.path),
+                    os.path.basename(self.path),
+                    self.sceptre_user_data)
 
             else:
                 raise UnsupportedTemplateFileTypeError(
                     "Template has file extension %s. Only .py, .yaml, "
-                    ".template, .json and .j2 are supported.",
+                    ".template, .json, .jsonnet, and .j2 are supported.",
                     os.path.splitext(self.path)[1]
                 )
         return self._body
