@@ -88,8 +88,7 @@ class Template(object):
                 self._body = self._call_sceptre_handler()
             elif file_extension == ".jsonnet":
                 self._body = JsonnetRenderer.render(
-                    os.path.dirname(self.path),
-                    os.path.basename(self.path),
+                    self.path,
                     self.sceptre_user_data)
 
             else:

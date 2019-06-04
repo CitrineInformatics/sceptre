@@ -50,7 +50,10 @@ class JsonnetRenderer(object):
     def import_callback(sceptre_user_data, template_dir, import_path):
         """
         Callback function ran when a Jsonnet template uses the 'import'
-        keyword. Treats 'sceptre_user_data' as a special import for the user
+        keyword. Imports are relative to the ``templates/`` subdirectory of the
+        current working directory.
+
+        Treats 'sceptre_user_data' as a special import for the user
         data defined in the template config.
 
         :param template_dir: The directory containing the template.
@@ -65,22 +68,22 @@ class JsonnetRenderer(object):
                   file.
         :rtype: (str, str)
         """
+        template_root = os.path.join(os.getcwd(), 'templates')
         if import_path == 'sceptre_user_data':
             return 'sceptre_user_data', json.dumps(sceptre_user_data)
-        full_path, content = JsonnetRenderer.try_path(template_dir, import_path)
+        full_path, content = JsonnetRenderer.try_path(
+                template_root, import_path)
         if content:
             return full_path, content
         raise RuntimeError('File not found')
 
     @staticmethod
-    def render(template_dir, filename, sceptre_user_data):
+    def render(path, sceptre_user_data):
         """
         Renders a jsonnet template, returning the rendered string.
 
-        :param template_dir: The directory containing the template.
-        :type template_dir: str
-        :param filename: The name of the template file.
-        :type filename: str
+        :param path: The path to the template.
+        :type path: str
         :param sceptre_user_data: A dictionary of arbitrary data to be made
                importable in Jsonnet through `import 'sceptre_user_data';`
         :type sceptre_user_data: dict
@@ -90,8 +93,5 @@ class JsonnetRenderer(object):
         import_callback = functools.partial(
                 JsonnetRenderer.import_callback,
                 sceptre_user_data)
-        body = _jsonnet.evaluate_file(
-            os.path.join(template_dir, filename),
-            import_callback=import_callback,
-        )
+        body = _jsonnet.evaluate_file(path, import_callback=import_callback)
         return body
