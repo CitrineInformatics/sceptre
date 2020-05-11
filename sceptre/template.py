@@ -12,12 +12,16 @@ import logging
 import os
 import sys
 import threading
+import traceback
 
 import botocore
-import jinja2
+from jinja2 import Environment
+from jinja2 import FileSystemLoader
+from jinja2 import StrictUndefined
+from jinja2 import select_autoescape
 from .jsonnet_renderer import JsonnetRenderer
-from .exceptions import UnsupportedTemplateFileTypeError
-from .exceptions import TemplateSceptreHandlerError
+from sceptre.exceptions import UnsupportedTemplateFileTypeError
+from sceptre.exceptions import TemplateSceptreHandlerError
 
 
 class Template(object):
@@ -64,6 +68,47 @@ class Template(object):
             )
         )
 
+    def _print_template_traceback(self):
+        """
+        Prints a stack trace, including only files which are inside a
+        'templates' directory. The function is intended to give the operator
+        instant feedback about why their templates are failing to compile.
+
+        :rtype: None
+        """
+
+        def _print_frame(filename, line, fcn, line_text):
+            self.logger.error(
+                "{}:{}:  Template error in '{}'\n=> `{}`".format(
+                    filename, line, fcn, line_text
+                )
+            )
+
+        try:
+            _, _, tb = sys.exc_info()
+            stack_trace = traceback.extract_tb(tb)
+            search_string = os.path.join("", "templates", "")
+            if search_string in self.path:
+                template_path = self.path.split(search_string)[0] + search_string
+            else:
+                return
+            for frame in stack_trace:
+                if isinstance(frame, tuple):
+                    # Python 2 / Old style stack frame
+                    if template_path in frame[0]:
+                        _print_frame(frame[0], frame[1], frame[2], frame[3])
+                else:
+                    if template_path in frame.filename:
+                        _print_frame(
+                            frame.filename, frame.lineno, frame.name, frame.line
+                        )
+        except Exception as tb_exception:
+            self.logger.error(
+                "A template error occured. "
+                + "Additionally, a traceback exception occured. Exception: %s",
+                tb_exception,
+            )
+
     @property
     def body(self):
         """
@@ -75,28 +120,33 @@ class Template(object):
         if self._body is None:
             file_extension = os.path.splitext(self.path)[1]
 
-            if file_extension in {".json", ".yaml", ".template"}:
-                with open(self.path) as template_file:
-                    self._body = template_file.read()
-            elif file_extension == ".j2":
-                self._body = self._render_jinja_template(
-                    os.path.dirname(self.path),
-                    os.path.basename(self.path),
-                    {"sceptre_user_data": self.sceptre_user_data}
-                )
-            elif file_extension == ".py":
-                self._body = self._call_sceptre_handler()
-            elif file_extension == ".jsonnet":
-                self._body = JsonnetRenderer.render(
-                    self.path,
-                    self.sceptre_user_data)
+            try:
+                if file_extension in {".json", ".yaml", ".template"}:
+                    with open(self.path) as template_file:
+                        self._body = template_file.read()
+                elif file_extension == ".j2":
+                    self._body = self._render_jinja_template(
+                        os.path.dirname(self.path),
+                        os.path.basename(self.path),
+                        {"sceptre_user_data": self.sceptre_user_data},
+                    )
+                elif file_extension == ".py":
+                    self._body = self._call_sceptre_handler()
+                elif file_extension == ".jsonnet":
+                    self._body = JsonnetRenderer.render(
+                        self.path, self.sceptre_user_data
+                    )
 
-            else:
-                raise UnsupportedTemplateFileTypeError(
-                    "Template has file extension %s. Only .py, .yaml, "
-                    ".template, .json, .jsonnet, and .j2 are supported.",
-                    os.path.splitext(self.path)[1]
-                )
+                else:
+                    raise UnsupportedTemplateFileTypeError(
+                        "Template has file extension %s. Only .py, .yaml, "
+                        ".template, .json, .jsonnet, and .j2 are supported.",
+                        os.path.splitext(self.path)[1],
+                    )
+            except Exception as e:
+                self._print_template_traceback()
+                raise e
+
         return self._body
 
     def _call_sceptre_handler(self):
@@ -109,21 +159,21 @@ class Template(object):
         :raises: IOError
         :raises: TemplateSceptreHandlerError
         """
+
         # Get relative path as list between current working directory and where
         # the template is
         # NB: this is a horrible hack...
         relpath = os.path.relpath(self.path, os.getcwd()).split(os.path.sep)
-        relpaths_to_add = [
-            os.path.sep.join(relpath[:i+1])
+        paths_to_add = [
+            os.path.join(os.getcwd(), os.path.sep.join(relpath[: i + 1]))
             for i in range(len(relpath[:-1]))
         ]
+
         # Add any directory between the current working directory and where
         # the template is to the python path
-        for directory in relpaths_to_add:
-            sys.path.append(os.path.join(os.getcwd(), directory))
-        self.logger.debug(
-            "%s - Getting CloudFormation from %s", self.name, self.path
-        )
+        for path in paths_to_add:
+            sys.path.append(path)
+        self.logger.debug("%s - Getting CloudFormation from %s", self.name, self.path)
 
         if not os.path.isfile(self.path):
             raise IOError("No such file or directory: '%s'", self.path)
@@ -133,15 +183,17 @@ class Template(object):
         try:
             body = module.sceptre_handler(self.sceptre_user_data)
         except AttributeError as e:
-            if 'sceptre_handler' in str(e):
+            if "sceptre_handler" in str(e):
                 raise TemplateSceptreHandlerError(
                     "The template does not have the required "
                     "'sceptre_handler(sceptre_user_data)' function."
                 )
             else:
                 raise e
-        for directory in relpaths_to_add:
-            sys.path.remove(os.path.join(os.getcwd(), directory))
+
+        for path in paths_to_add:
+            sys.path.remove(path)
+
         return body
 
     def upload_to_s3(self):
@@ -168,7 +220,9 @@ class Template(object):
 
         self.logger.debug(
             "%s - Uploading template to: 's3://%s/%s'",
-            self.name, bucket_name, bucket_key
+            self.name,
+            bucket_name,
+            bucket_key,
         )
         self.connection_manager.call(
             service="s3",
@@ -177,8 +231,8 @@ class Template(object):
                 "Bucket": bucket_name,
                 "Key": bucket_key,
                 "Body": self.body,
-                "ServerSideEncryption": "AES256"
-            }
+                "ServerSideEncryption": "AES256",
+            },
         )
 
         china_regions = ["cn-north-1", "cn-northwest-1"]
@@ -188,9 +242,7 @@ class Template(object):
                 bucket_name, bucket_region, bucket_key
             )
         else:
-            url = "https://{0}.s3.amazonaws.com/{1}".format(
-                bucket_name, bucket_key
-            )
+            url = "https://{0}.s3.amazonaws.com/{1}".format(bucket_name, bucket_key)
 
         self.logger.debug("%s - Template URL: '%s'", self.name, url)
 
@@ -207,26 +259,19 @@ class Template(object):
         """
         bucket_name = self.s3_details["bucket_name"]
         self.logger.debug(
-            "%s - Attempting to find template bucket '%s'",
-            self.name, bucket_name
+            "%s - Attempting to find template bucket '%s'", self.name, bucket_name
         )
         try:
             self.connection_manager.call(
-                service="s3",
-                command="head_bucket",
-                kwargs={"Bucket": bucket_name}
+                service="s3", command="head_bucket", kwargs={"Bucket": bucket_name}
             )
         except botocore.exceptions.ClientError as exp:
             if exp.response["Error"]["Message"] == "Not Found":
-                self.logger.debug(
-                    "%s - %s bucket not found.", self.name, bucket_name
-                )
+                self.logger.debug("%s - %s bucket not found.", self.name, bucket_name)
                 return False
             else:
                 raise
-        self.logger.debug(
-            "%s - Found template bucket '%s'", self.name, bucket_name
-        )
+        self.logger.debug("%s - Found template bucket '%s'", self.name, bucket_name)
         return True
 
     def _create_bucket(self):
@@ -238,15 +283,11 @@ class Template(object):
         """
         bucket_name = self.s3_details["bucket_name"]
 
-        self.logger.debug(
-            "%s - Creating new bucket '%s'", self.name, bucket_name
-        )
+        self.logger.debug("%s - Creating new bucket '%s'", self.name, bucket_name)
 
         if self.connection_manager.region == "us-east-1":
             self.connection_manager.call(
-                service="s3",
-                command="create_bucket",
-                kwargs={"Bucket": bucket_name}
+                service="s3", command="create_bucket", kwargs={"Bucket": bucket_name}
             )
         else:
             self.connection_manager.call(
@@ -256,8 +297,8 @@ class Template(object):
                     "Bucket": bucket_name,
                     "CreateBucketConfiguration": {
                         "LocationConstraint": self.connection_manager.region
-                    }
-                }
+                    },
+                },
             )
 
     def get_boto_call_parameter(self):
@@ -295,9 +336,10 @@ class Template(object):
         """
         logger = logging.getLogger(__name__)
         logger.debug("%s Rendering CloudFormation template", filename)
-        env = jinja2.Environment(
-            loader=jinja2.FileSystemLoader(template_dir),
-            undefined=jinja2.StrictUndefined
+        env = Environment(
+            autoescape=select_autoescape(disabled_extensions=("j2",), default=True,),
+            loader=FileSystemLoader(template_dir),
+            undefined=StrictUndefined,
         )
         template = env.get_template(filename)
         body = template.render(**jinja_vars)

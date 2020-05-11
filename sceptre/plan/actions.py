@@ -43,7 +43,8 @@ class StackActions(object):
         self.name = self.stack.name
         self.logger = logging.getLogger(__name__)
         self.connection_manager = ConnectionManager(
-            self.stack.region, self.stack.profile, self.stack.external_name
+            self.stack.region, self.stack.profile,
+            self.stack.external_name, self.stack.iam_role
         )
 
     @add_stack_hooks
@@ -172,6 +173,7 @@ class StackActions(object):
         )
         return self._wait_for_completion()
 
+    @add_stack_hooks
     def launch(self):
         """
         Launches the Stack.
