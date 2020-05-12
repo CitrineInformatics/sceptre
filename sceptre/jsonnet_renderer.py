@@ -6,92 +6,87 @@ sceptre.jsonnet_renderer
 This module implements a JsonnetRenderer class, which renders Jsonnet templates.
 """
 
-import os
-import _jsonnet
 import json
-import functools
+import yaml
+import subprocess
+
+
+# Jsonnet imports are resolved relative to this directory, which in turn is
+# relative to the repository root.
+TEMPLATES_DIR = "templates"
+
+# Jsonnet command and associated arguments to render a template
+JSONNET_COMMAND = ["jsonnet", "--jpath", TEMPLATES_DIR]
 
 
 class JsonnetRenderer(object):
     """
-    Uses the Jsonnet Python bindings to render .jsonnet templates to
-    CloudFormation. See https://jsonnet.org/ref/bindings.html#python_api for
-    more info on the Jsonnet Python bindings.
+    Uses the Jsonnet command to render .jsonnet templates to
+    CloudFormation. See https://jsonnet.org/ for more info on Jsonnet.
     """
-    @staticmethod
-    def try_path(template_dir, import_path):
-        """
-        Try to import a file given by `import_path`, relative to
-        `template_dir`. Helper function for import_callback.
-
-        :param template_dir: The directory containing the template.
-        :type template_dir: str
-        :param import_path: The requested path to import, relative to
-               template_dir.
-        :returns: The full path to the imported file, and the contents of that
-                  file.
-        :rtype: (str, str)
-        """
-        if not import_path:
-            raise RuntimeError('Got invalid filename (empty string).')
-        if import_path[0] == '/':
-            full_path = import_path
-        else:
-            full_path = os.path.join(template_dir, import_path)
-        if full_path[-1] == '/':
-            raise RuntimeError('Attempted to import a directory')
-
-        if not os.path.isfile(full_path):
-            return full_path, None
-        with open(full_path) as f:
-            return full_path, f.read()
 
     @staticmethod
-    def import_callback(sceptre_user_data, template_dir, import_path):
+    def _render(template_path, extra_args=[]):
         """
-        Callback function ran when a Jsonnet template uses the 'import'
-        keyword. Imports are relative to the ``templates/`` subdirectory of the
-        current working directory.
+        Low level function to run the jsonnet command as a subprocess.
 
-        Treats 'sceptre_user_data' as a special import for the user
-        data defined in the template config.
-
-        :param template_dir: The directory containing the template.
-        :type template_dir: str
-        :param import_path: The requested path to import, relative to
-               template_dir.
-        :type import_path: str
-        :param sceptre_user_data: A dictionary of arbitrary data to be made
-               importable in Jsonnet through `import 'sceptre_user_data';`
-        :type sceptre_user_data: dict
-        :returns: The full path to the imported file, and the contents of that
-                  file.
-        :rtype: (str, str)
-        """
-        template_root = os.path.join(os.getcwd(), 'templates')
-        if import_path == 'sceptre_user_data':
-            return 'sceptre_user_data', json.dumps(sceptre_user_data)
-        full_path, content = JsonnetRenderer.try_path(
-                template_root, import_path)
-        if content:
-            return full_path, content
-        raise RuntimeError('File not found')
-
-    @staticmethod
-    def render(path, sceptre_user_data):
-        """
-        Renders a jsonnet template, returning the rendered string.
-
-        :param path: The path to the template.
-        :type path: str
-        :param sceptre_user_data: A dictionary of arbitrary data to be made
-               importable in Jsonnet through `import 'sceptre_user_data';`
-        :type sceptre_user_data: dict
-        :returns: The body of the CloudFormation template.
+        :param template_path: Path to the template to render.
+        :param extra_args: List of strings to send to the jsonnet command as
+            arguments.
+        :returns: The output of the jsonnet command, as a string.
         :rtype: str
         """
-        import_callback = functools.partial(
-                JsonnetRenderer.import_callback,
-                sceptre_user_data)
-        body = _jsonnet.evaluate_file(path, import_callback=import_callback)
-        return body
+        subprocess_args = JSONNET_COMMAND + extra_args + [template_path]
+        result = subprocess.run(
+            subprocess_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        if result.returncode != 0:
+            jsonnet_error = result.stderr.decode("utf-8")
+            raise RuntimeError(
+                f"Execution of {' '.join(subprocess_args)} failed with error:\n{jsonnet_error}"
+            )
+        return result.stdout.decode("utf-8")
+
+    @staticmethod
+    def render_json(template_path, extra_args=[]):
+        """
+        Renders a jsonnet template to JSON, returning the rendered string.
+
+        :param template_path: Path to the template to render.
+        :type template_path: str
+        :param extra_args: List of strings to send to the jsonnet command as
+            arguments.
+        :returns: The json rendered from template_path as a string.
+        :rtype: str
+        """
+        return JsonnetRenderer._render(template_path, extra_args)
+
+    @staticmethod
+    def render_python(template_path, extra_args=[]):
+        """
+        Renders a jsonnet template to a Python object and returns that object.
+
+        :param template_path: Path to the template to render.
+        :type template_path: str
+        :param extra_args: List of strings to send to the jsonnet command as
+            arguments.
+        :returns: The body of the Jsonnet template as a Python object.
+        :rtype: dict
+        """
+        rendered_template = JsonnetRenderer.render_json(template_path, extra_args)
+        return json.loads(rendered_template)
+
+    @staticmethod
+    def render(template_path, extra_args=[]):
+        """
+        Renders a jsonnet template to YAML, returning the rendered string.
+
+        :param template_path: Path to the template to render.
+        :type template_path: str
+        :param extra_args: List of strings to send to the jsonnet command as
+            arguments.
+        :returns: The body of the Jsonnet template in YAML format.
+        :rtype: str
+        """
+        template_obj = JsonnetRenderer.render_python(template_path, extra_args)
+        return yaml.safe_dump(template_obj)
