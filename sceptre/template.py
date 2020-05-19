@@ -133,9 +133,7 @@ class Template(object):
                 elif file_extension == ".py":
                     self._body = self._call_sceptre_handler()
                 elif file_extension == ".jsonnet":
-                    self._body = JsonnetRenderer.render(
-                        self.path, self.sceptre_user_data
-                    )
+                    self._body = JsonnetRenderer.render(self.path)
 
                 else:
                     raise UnsupportedTemplateFileTypeError(
