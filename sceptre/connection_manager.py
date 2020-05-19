@@ -13,11 +13,9 @@ import random
 import threading
 import time
 import boto3
-import botocore.session
 
-from os import environ, path
+from os import environ
 from botocore.exceptions import ClientError
-from botocore import credentials
 
 from sceptre.helpers import mask_key
 from sceptre.exceptions import InvalidAWSCredentialsError, RetryLimitExceededError
@@ -132,33 +130,16 @@ class ConnectionManager(object):
                 self.logger.debug("No Boto3 session found, creating one...")
                 self.logger.debug("Using cli credentials...")
 
-                # Create a botocore session to pass into the boto3 session.
-                # Used to add a persistent credential cache to botocore after
-                # the boto3 session has finished initialization.
-                botocore_session = botocore.session.get_session()
-
                 # Credentials from env take priority over profile
                 config = {
                     "profile_name": profile,
                     "region_name": region,
                     "aws_access_key_id": environ.get("AWS_ACCESS_KEY_ID"),
                     "aws_secret_access_key": environ.get("AWS_SECRET_ACCESS_KEY"),
-                    "aws_session_token": environ.get("AWS_SESSION_TOKEN"),
-                    "botocore_session": botocore_session,
+                    "aws_session_token": environ.get("AWS_SESSION_TOKEN")
                 }
 
                 session = boto3.session.Session(**config)
-
-                # Use a credentials cache for assumed role profiles.
-
-                # Directory to store cached assume-role credentials.
-                # This is the same directory used by aws-cli
-                CACHE_DIR = path.expanduser(path.join("~", ".aws", "cli", "cache"))
-
-                provider = botocore_session.get_component(
-                    "credential_provider"
-                ).get_provider("assume-role")
-                provider.cache = credentials.JSONFileCache(CACHE_DIR)
 
                 self._boto_sessions[key] = session
 
