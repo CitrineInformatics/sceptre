@@ -12,6 +12,7 @@ import time
 
 from os import path
 from datetime import datetime, timedelta
+from collections import OrderedDict
 
 import botocore
 import json
@@ -307,16 +308,23 @@ class StackActions(object):
 
     def describe_events(self):
         """
-        Returns the CloudFormation events for a Stack.
+        Returns the CloudFormation events for a Stack and it's child Stacks.
 
-        :returns: CloudFormation events for a Stack.
+        :returns: CloudFormation events for a Stack and child Stacks.
         :rtype: dict
         """
-        return self.connection_manager.call(
-            service="cloudformation",
-            command="describe_stack_events",
-            kwargs={"StackName": self.stack.external_name}
-        )
+
+        nested_events = {'StackEvents': []}
+        for stack_name in [self.stack.external_name, *self._child_stack_details().keys()]:
+            nested_events['StackEvents'].extend(
+                self.connection_manager.call(
+                    service="cloudformation",
+                    command="describe_stack_events",
+                    kwargs={"StackName": stack_name}
+                )["StackEvents"]
+            )
+
+        return nested_events
 
     def describe_resources(self):
         """
@@ -628,6 +636,31 @@ class StackActions(object):
         except StackDoesNotExistError:
             return "PENDING"
 
+    def _child_stack_details(self):
+        """
+        Returns a dict of StackName: {'RootId': '...', 'ParentId': '...''StackId': '...', 'StackName': '...', ...} as
+        defined by the AWS list-stacks call.  Unlike list-stacks, ParentId and RootId are always defined because this
+        method only returns child stacks where the RootId == self.stack.external_name.
+
+        :returns: A dict of stack name to stack details
+        :rtype: dict
+        """
+        root_stack = self._describe()
+
+        root_stack_count = len(root_stack['Stacks'])
+        if root_stack_count != 1:
+            raise ValueError('Expected one stack with name {} but saw {} stacks'.format(
+                self.stack.external_name, root_stack_count))
+
+        all_stacks = self.connection_manager.call(
+            service="cloudformation",
+            command="list_stacks"
+        )
+
+        root_id = root_stack['Stacks'][0]['StackId']
+        child_stacks = [(x['StackName'], x) for x in all_stacks['StackSummaries'] if x.get('RootId') == root_id]
+        return OrderedDict(child_stacks)
+
     def _format_parameters(self, parameters):
         """
         Converts CloudFormation parameters to the format used by Boto3.
@@ -771,8 +804,9 @@ class StackActions(object):
 
     def _log_new_events(self):
         """
-        Log the latest Stack events while the Stack is being built.
+        Log the latest Stack and child Stack events while the Stack is being built.
         """
+        child_stack_details = self._child_stack_details()
         events = self.describe_events()["StackEvents"]
         events.reverse()
         new_events = [
@@ -780,8 +814,14 @@ class StackActions(object):
             if event["Timestamp"] > self.most_recent_event_datetime
         ]
         for event in new_events:
+            stack_name = event['StackName']
+            if stack_name in child_stack_details:
+                stack_name = f"[Nested] {self.stack.name}"
+            else:
+                stack_name = self.stack.name
+
             self.logger.info(" ".join([
-                self.stack.name,
+                stack_name,
                 event["LogicalResourceId"],
                 event["ResourceType"],
                 event["ResourceStatus"],
