@@ -481,7 +481,9 @@ class TestStackActions(object):
             kwargs={"StackName": sentinel.external_name}
         )
 
-    def test_describe_events_sends_correct_request(self):
+    @patch("sceptre.plan.actions.StackActions._child_stack_details")
+    def test_describe_events_sends_correct_request(self, mock_child_stack_details):
+        mock_child_stack_details.return_value = {}
         self.actions.describe_events()
         self.actions.connection_manager.call.assert_called_with(
             service="cloudformation",
@@ -897,23 +899,26 @@ class TestStackActions(object):
         with pytest.raises(UnknownStackStatusError):
             self.actions._get_simplified_status("UNKOWN_STATUS")
 
+    @patch("sceptre.plan.actions.StackActions._child_stack_details")
     @patch("sceptre.plan.actions.StackActions.describe_events")
-    def test_log_new_events_calls_describe_events(self, mock_describe_events):
+    def test_log_new_events_calls_describe_events(self, mock_describe_events, mock_child_stack_details):
         mock_describe_events.return_value = {
             "StackEvents": []
         }
+        mock_child_stack_details.return_value = {}
         self.actions._log_new_events()
         self.actions.describe_events.assert_called_once_with()
 
+    @patch("sceptre.plan.actions.StackActions._child_stack_details")
     @patch("sceptre.plan.actions.StackActions.describe_events")
-    def test_log_new_events_prints_correct_event(self, mock_describe_events):
-        self.actions.stack.name = "stack-name"
+    def test_log_new_events_prints_correct_event(self, mock_describe_events, mock_child_stack_details):
         mock_describe_events.return_value = {
             "StackEvents": [
                 {
                     "Timestamp": datetime.datetime(
                         2016, 3, 15, 14, 2, 0, 0, tzinfo=tzutc()
                     ),
+                    "StackName": "id-2",
                     "LogicalResourceId": "id-2",
                     "ResourceType": "type-2",
                     "ResourceStatus": "resource-status"
@@ -922,6 +927,7 @@ class TestStackActions(object):
                     "Timestamp": datetime.datetime(
                         2016, 3, 15, 14, 1, 0, 0, tzinfo=tzutc()
                     ),
+                    "StackName": "id-1",
                     "LogicalResourceId": "id-1",
                     "ResourceType": "type-1",
                     "ResourceStatus": "resource",
@@ -929,18 +935,64 @@ class TestStackActions(object):
                 }
             ]
         }
+        self.actions.stack.name = "stack-name"
+        mock_child_stack_details.return_value = {}
         self.actions.most_recent_event_datetime = (
             datetime.datetime(2016, 3, 15, 14, 0, 0, 0, tzinfo=tzutc())
         )
         self.actions._log_new_events()
 
+    @patch("sceptre.plan.actions.StackActions._describe")
+    @patch("sceptre.plan.actions.StackActions._child_stack_details")
+    @patch("sceptre.plan.actions.StackActions.describe_events")
+    def test_log_new_nested_events_prints_correct_event(self, mock_describe_events, mock_child_stack_details, mock_describe):
+        mock_describe_events.return_value = {
+            "StackEvents": [
+                {
+                    "Timestamp": datetime.datetime(
+                        2016, 3, 15, 14, 2, 0, 0, tzinfo=tzutc()
+                    ),
+                    "StackName": "id-2",
+                    "LogicalResourceId": "id-2",
+                    "StackId": "id-2",
+                    "ResourceType": "type-2",
+                    "ResourceStatus": "resource-status"
+                },
+                {
+                    "Timestamp": datetime.datetime(
+                        2016, 3, 15, 14, 1, 0, 0, tzinfo=tzutc()
+                    ),
+                    "StackName": "id-1",
+                    "LogicalResourceId": "id-1",
+                    "StackId": "id-1",
+                    "ResourceType": "type-1",
+                    "ResourceStatus": "resource",
+                    "ResourceStatusReason": "User Initiated"
+                }
+            ]
+        }
+        self.actions.stack.name = "stack-name"
+        mock_describe.return_value = {'Stacks': [{'StackId': "id-2"}]}
+        mock_child_stack_details.return_value = {
+            "id-2-substack-1": {
+                "StackName": "id-2-substack-1",
+                "RootId": "id-2"
+            }
+        }
+        self.actions.most_recent_event_datetime = (
+            datetime.datetime(2016, 3, 15, 14, 0, 0, 0, tzinfo=tzutc())
+        )
+        self.actions._log_new_events()
+
+    @patch("sceptre.plan.actions.StackActions._child_stack_details")
     @patch("sceptre.plan.actions.StackActions._get_cs_status")
     def test_wait_for_cs_completion_calls_get_cs_status(
-        self, mock_get_cs_status
+        self, mock_get_cs_status, mock_child_stack_details
     ):
         mock_get_cs_status.side_effect = [
             StackChangeSetStatus.PENDING, StackChangeSetStatus.READY
         ]
+        mock_child_stack_details.return_value = {}
 
         self.actions.wait_for_cs_completion(sentinel.change_set_name)
         mock_get_cs_status.assert_called_with(sentinel.change_set_name)
@@ -951,15 +1003,15 @@ class TestStackActions(object):
     ):
         scss = StackChangeSetStatus
         return_values = {                                                                                                     # NOQA
-                 "Status":    ('CREATE_PENDING', 'CREATE_IN_PROGRESS', 'CREATE_COMPLETE', 'DELETE_COMPLETE', 'FAILED'),       # NOQA
-        "ExecutionStatus": {                                                                                                  # NOQA
-        'UNAVAILABLE':         (scss.PENDING,     scss.PENDING,         scss.PENDING,      scss.DEFUNCT,      scss.DEFUNCT),  # NOQA
-        'AVAILABLE':           (scss.PENDING,     scss.PENDING,         scss.READY,        scss.DEFUNCT,      scss.DEFUNCT),  # NOQA
-        'EXECUTE_IN_PROGRESS': (scss.DEFUNCT,     scss.DEFUNCT,         scss.DEFUNCT,      scss.DEFUNCT,      scss.DEFUNCT),  # NOQA
-        'EXECUTE_COMPLETE':    (scss.DEFUNCT,     scss.DEFUNCT,         scss.DEFUNCT,      scss.DEFUNCT,      scss.DEFUNCT),  # NOQA
-        'EXECUTE_FAILED':      (scss.DEFUNCT,     scss.DEFUNCT,         scss.DEFUNCT,      scss.DEFUNCT,      scss.DEFUNCT),  # NOQA
-        'OBSOLETE':            (scss.DEFUNCT,     scss.DEFUNCT,         scss.DEFUNCT,      scss.DEFUNCT,      scss.DEFUNCT),  # NOQA
-        }                                                                                                                     # NOQA
+            "Status":    ('CREATE_PENDING', 'CREATE_IN_PROGRESS', 'CREATE_COMPLETE', 'DELETE_COMPLETE', 'FAILED'),       # NOQA
+            "ExecutionStatus": {                                                                                                  # NOQA
+                'UNAVAILABLE':         (scss.PENDING,     scss.PENDING,         scss.PENDING,      scss.DEFUNCT,      scss.DEFUNCT),  # NOQA
+                'AVAILABLE':           (scss.PENDING,     scss.PENDING,         scss.READY,        scss.DEFUNCT,      scss.DEFUNCT),  # NOQA
+                'EXECUTE_IN_PROGRESS': (scss.DEFUNCT,     scss.DEFUNCT,         scss.DEFUNCT,      scss.DEFUNCT,      scss.DEFUNCT),  # NOQA
+                'EXECUTE_COMPLETE':    (scss.DEFUNCT,     scss.DEFUNCT,         scss.DEFUNCT,      scss.DEFUNCT,      scss.DEFUNCT),  # NOQA
+                'EXECUTE_FAILED':      (scss.DEFUNCT,     scss.DEFUNCT,         scss.DEFUNCT,      scss.DEFUNCT,      scss.DEFUNCT),  # NOQA
+                'OBSOLETE':            (scss.DEFUNCT,     scss.DEFUNCT,         scss.DEFUNCT,      scss.DEFUNCT,      scss.DEFUNCT),  # NOQA
+            }                                                                                                                     # NOQA
         }                                                                                                                     # NOQA
 
         for i, status in enumerate(return_values['Status']):
