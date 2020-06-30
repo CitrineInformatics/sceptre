@@ -942,6 +942,48 @@ class TestStackActions(object):
         )
         self.actions._log_new_events()
 
+    @patch("sceptre.plan.actions.StackActions._describe")
+    @patch("sceptre.plan.actions.StackActions._child_stack_details")
+    @patch("sceptre.plan.actions.StackActions.describe_events")
+    def test_log_new_nested_events_prints_correct_event(self, mock_describe_events, mock_child_stack_details, mock_describe):
+        mock_describe_events.return_value = {
+            "StackEvents": [
+                {
+                    "Timestamp": datetime.datetime(
+                        2016, 3, 15, 14, 2, 0, 0, tzinfo=tzutc()
+                    ),
+                    "StackName": "id-2",
+                    "LogicalResourceId": "id-2",
+                    "StackId": "id-2",
+                    "ResourceType": "type-2",
+                    "ResourceStatus": "resource-status"
+                },
+                {
+                    "Timestamp": datetime.datetime(
+                        2016, 3, 15, 14, 1, 0, 0, tzinfo=tzutc()
+                    ),
+                    "StackName": "id-1",
+                    "LogicalResourceId": "id-1",
+                    "StackId": "id-1",
+                    "ResourceType": "type-1",
+                    "ResourceStatus": "resource",
+                    "ResourceStatusReason": "User Initiated"
+                }
+            ]
+        }
+        self.actions.stack.name = "stack-name"
+        mock_describe.return_value = {'Stacks': [{'StackId': "id-2"}]}
+        mock_child_stack_details.return_value = {
+            "id-2-substack-1": {
+                "StackName": "id-2-substack-1",
+                "RootId": "id-2"
+            }
+        }
+        self.actions.most_recent_event_datetime = (
+            datetime.datetime(2016, 3, 15, 14, 0, 0, 0, tzinfo=tzutc())
+        )
+        self.actions._log_new_events()
+
     @patch("sceptre.plan.actions.StackActions._child_stack_details")
     @patch("sceptre.plan.actions.StackActions._get_cs_status")
     def test_wait_for_cs_completion_calls_get_cs_status(
