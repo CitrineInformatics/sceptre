@@ -638,9 +638,10 @@ class StackActions(object):
 
     def _child_stack_details(self):
         """
-        Returns a dict of StackName: {'RootId': '...', 'ParentId': '...''StackId': '...', 'StackName': '...', ...} as
-        defined by the AWS list-stacks call.  Unlike list-stacks, ParentId and RootId are always defined because this
-        method only returns child stacks where the RootId == self.stack.external_name.
+        Returns a dict of StackName: {'RootId': '...', 'ParentId': '...''StackId': '...',
+        'StackName': '...', ...} as defined by the AWS list-stacks call.  Unlike
+        list-stacks, ParentId and RootId are always defined because this method only returns
+        child stacks where the RootId == self.stack.external_name.
 
         :returns: A dict of stack name to stack details
         :rtype: dict
@@ -658,7 +659,9 @@ class StackActions(object):
         )
 
         root_id = root_stack['Stacks'][0]['StackId']
-        child_stacks = [(x['StackName'], x) for x in all_stacks['StackSummaries'] if x.get('RootId') == root_id]
+        child_stacks = [
+            (x['StackName'], x) for x in all_stacks['StackSummaries'] if x.get('RootId') == root_id
+        ]
         return OrderedDict(child_stacks)
 
     def _format_parameters(self, parameters):

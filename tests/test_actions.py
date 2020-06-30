@@ -115,7 +115,7 @@ class TestStackActions(object):
 
     @patch("sceptre.plan.actions.StackActions._wait_for_completion")
     def test_create_sends_correct_request_no_notifications(
-            self, mock_wait_for_completion
+        self, mock_wait_for_completion
     ):
         self.actions.stack._template = Mock(spec=Template)
         self.actions.stack._template.get_boto_call_parameter.return_value = {
@@ -150,7 +150,7 @@ class TestStackActions(object):
 
     @patch("sceptre.plan.actions.StackActions._wait_for_completion")
     def test_create_sends_correct_request_with_no_failure_no_timeout(
-            self, mock_wait_for_completion
+        self, mock_wait_for_completion
     ):
         self.template._body = sentinel.template
         self.actions.stack.on_failure = None
@@ -662,7 +662,7 @@ class TestStackActions(object):
 
     @patch("sceptre.plan.actions.StackActions._wait_for_completion")
     def test_execute_change_set_sends_correct_request(
-            self, mock_wait_for_completion
+        self, mock_wait_for_completion
     ):
         self.actions.execute_change_set(sentinel.change_set_name)
         self.actions.connection_manager.call.assert_called_with(
@@ -987,7 +987,7 @@ class TestStackActions(object):
     @patch("sceptre.plan.actions.StackActions._child_stack_details")
     @patch("sceptre.plan.actions.StackActions._get_cs_status")
     def test_wait_for_cs_completion_calls_get_cs_status(
-            self, mock_get_cs_status, mock_child_stack_details
+        self, mock_get_cs_status, mock_child_stack_details
     ):
         mock_get_cs_status.side_effect = [
             StackChangeSetStatus.PENDING, StackChangeSetStatus.READY
@@ -999,7 +999,7 @@ class TestStackActions(object):
 
     @patch("sceptre.plan.actions.StackActions.describe_change_set")
     def test_get_cs_status_handles_all_statuses(
-            self, mock_describe_change_set
+        self, mock_describe_change_set
     ):
         scss = StackChangeSetStatus
         return_values = {                                                                                                     # NOQA
@@ -1051,7 +1051,7 @@ class TestStackActions(object):
 
     @patch("sceptre.plan.actions.StackActions.describe_change_set")
     def test_get_cs_status_raises_unexpected_exceptions(
-            self, mock_describe_change_set
+        self, mock_describe_change_set
     ):
         mock_describe_change_set.side_effect = ClientError(
             {
